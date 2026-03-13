@@ -53,6 +53,7 @@ export default function GamePage() {
   const [isGameReady, setIsGameReady] = useState(false);
   const [volume, setVolume] = useState(80);
   const [muted, setMuted] = useState(false);
+  const [circuitEnabled, setCircuitEnabled] = useState(false);
   const [trackElapsed, setTrackElapsed] = useState(0);
   const [trackDuration, setTrackDuration] = useState(0);
   const [visualizerLevels, setVisualizerLevels] = useState<number[]>(() => Array.from({ length: 24 }, () => 14));
@@ -63,6 +64,8 @@ export default function GamePage() {
   const [hideHighScoreTracker, setHideHighScoreTracker] = useState(false);
   const [copiedShareLink, setCopiedShareLink] = useState(false);
   const [distortionLevel, setDistortionLevel] = useState<DistortionLevel>('high');
+  const [dashboardExpanded, setDashboardExpanded] = useState(false);
+  const [songComplete, setSongComplete] = useState(false);
   const gameRef = useRef<Phaser.Game | null>(null);
   const soundRef = useRef<Howl | null>(null);
   const gameControlsRef = useRef<{
@@ -71,6 +74,7 @@ export default function GamePage() {
     resumeRun: () => void;
   } | null>(null);
   const gameplayActiveRef = useRef(false);
+  const circuitEnabledRef = useRef(false);
   const syncClientRef = useRef<MultiplayerSyncClient | null>(null);
   const sessionPlayerIdRef = useRef(`guest-${Math.random().toString(36).slice(2, 10)}`);
 
@@ -122,6 +126,7 @@ export default function GamePage() {
     : `https://x.com/intent/tweet?text=${encodeURIComponent(
         `I just scored ${latestSubmittedScore} on Rhythmforge (${selectedSongName} • ${selectedDifficulty.toUpperCase()}) 🔥 #Solana #Web3Gaming`
       )}&url=${encodeURIComponent(shareTargetUrl)}`;
+  const shouldBlurGameStage = dashboardExpanded || menuOpen;
 
   const formatTrackTime = (seconds: number) => {
     const normalizedSeconds = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;
@@ -371,10 +376,22 @@ export default function GamePage() {
     setMenuOpen(false);
     setGameStarted(false);
     setTrackElapsed(0);
+    setSongComplete(false);
 
     if (soundRef.current) {
       soundRef.current.stop();
     }
+  };
+
+  const handleSongEnd = () => {
+    if (!gameplayActiveRef.current) {
+      return;
+    }
+    gameControlsRef.current?.pauseRun();
+    gameplayActiveRef.current = false;
+    setGamePaused(true);
+    setGameStarted(false);
+    setSongComplete(true);
   };
 
   const resumeGameplay = () => {
@@ -390,6 +407,19 @@ export default function GamePage() {
     }
   };
 
+  const triggerComboFx = () => {
+    const container = document.getElementById('game-container');
+    if (!container) {
+      return;
+    }
+
+    container.classList.add('combo-flash');
+
+    window.setTimeout(() => {
+      container.classList.remove('combo-flash');
+    }, 220);
+  };
+
   const startGameplay = () => {
     if (!isGameReady || !gameControlsRef.current) {
       return;
@@ -398,46 +428,59 @@ export default function GamePage() {
     if (!soundRef.current) {
       const primaryTrack = selectedAudioUrl;
 
-      soundRef.current = new Howl({
-        src: [primaryTrack],
-        loop: true,
-        volume: volume / 100,
-        mute: muted,
-        html5: true,
-        onloaderror: (_soundId, error) => {
-          console.error('Audio failed to load:', error);
+      const candidateTracks = Array.from(
+        new Set([
+          primaryTrack,
+          defaultAudioUrl,
+          `${import.meta.env.BASE_URL}audio/nebula-sprint.mp3`,
+          `${import.meta.env.BASE_URL}audio/phantom-pulse.mp3`,
+          `${import.meta.env.BASE_URL}audio/solflare-sync.mp3`,
+        ])
+      );
 
-          if (primaryTrack !== defaultAudioUrl) {
-            soundRef.current?.unload();
-            soundRef.current = new Howl({
-              src: [defaultAudioUrl],
-              loop: true,
-              volume: volume / 100,
-              mute: muted,
-              html5: true,
+      const createHowlForTrack = (trackIndex: number) => {
+        const track = candidateTracks[Math.min(trackIndex, candidateTracks.length - 1)];
+
+        soundRef.current?.unload();
+        soundRef.current = new Howl({
+          src: [track],
+          loop: false,
+          volume: volume / 100,
+          mute: muted,
+          html5: true,
+          onloaderror: (_soundId, error) => {
+            console.error('Audio failed to load:', error, track);
+            const nextTrackIndex = trackIndex + 1;
+
+            if (nextTrackIndex < candidateTracks.length) {
+              createHowlForTrack(nextTrackIndex);
+              soundRef.current?.load();
+              return;
+            }
+
+            console.warn('All audio candidates failed to load. Continuing gameplay without audio.');
+          },
+          onplayerror: (_soundId, error) => {
+            console.error('Audio failed to play:', error);
+            const sound = soundRef.current;
+            if (!sound) {
+              return;
+            }
+
+            sound.once('unlock', () => {
+              sound.play();
             });
-            soundRef.current.play();
-            alert(`Selected track not found. Using default audio for ${selectedSongName}.`);
-            return;
-          }
+          },
+          onload: () => {
+            setTrackDuration(soundRef.current?.duration() ?? 0);
+          },
+          onend: () => {
+            handleSongEnd();
+          },
+        });
+      };
 
-          alert('Could not load game audio. Please verify app/public/audio/song.mp3');
-        },
-        onplayerror: (_soundId, error) => {
-          console.error('Audio failed to play:', error);
-          const sound = soundRef.current;
-          if (!sound) {
-            return;
-          }
-
-          sound.once('unlock', () => {
-            sound.play();
-          });
-        },
-        onload: () => {
-          setTrackDuration(soundRef.current?.duration() ?? 0);
-        },
-      });
+      createHowlForTrack(0);
     }
 
     if (Howler.ctx && Howler.ctx.state === 'suspended') {
@@ -455,6 +498,7 @@ export default function GamePage() {
       sound.stop();
       sound.play();
     }
+    setSongComplete(false);
     gameControlsRef.current?.startRun();
     gameplayActiveRef.current = true;
     setTrackElapsed(0);
@@ -465,6 +509,7 @@ export default function GamePage() {
     setGameStarted(true);
     setGamePaused(false);
     setMenuOpen(false);
+    setDashboardExpanded(false);
   };
 
   const toggleMenu = () => {
@@ -517,6 +562,10 @@ export default function GamePage() {
     localStorage.setItem(DISTORTION_STORAGE_KEY, distortionLevel);
     document.documentElement.setAttribute('data-distortion', distortionLevel);
   }, [distortionLevel]);
+
+  useEffect(() => {
+    circuitEnabledRef.current = circuitEnabled;
+  }, [circuitEnabled]);
 
   useEffect(() => {
     syncClientRef.current?.dispose();
@@ -637,9 +686,23 @@ export default function GamePage() {
   }, [gameStarted]);
 
   useEffect(() => {
+    if (gameStarted && health <= 0) {
+      pauseGameplay();
+      setMenuOpen(false);
+    }
+  }, [gameStarted, health]);
+
+  useEffect(() => {
     if (!gameRef.current) {
-      const gameWidth = Math.min(window.innerWidth * 0.9, 1100);
-      const gameHeight = 700;
+      const isMobileViewport = window.innerWidth < 820;
+      const viewportPaddingAllowance = isMobileViewport ? 20 : 56;
+      const availableWidth = Math.max(320, window.innerWidth - viewportPaddingAllowance);
+      const gameWidth = isMobileViewport
+        ? Math.min(availableWidth, 560)
+        : Math.min(availableWidth, 1100);
+      const gameHeight = isMobileViewport
+        ? Math.min(760, Math.max(600, window.innerHeight * 0.78))
+        : 700;
 
       const config = {
         type: Phaser.AUTO,
@@ -673,11 +736,9 @@ export default function GamePage() {
             let currentCombo = 0;
             let currentMultiplier = 1;
             let currentHealth = 100;
+            let missTimestamps: number[] = [];
 
             const updateHud = () => {
-              scoreText.setText(`SCORE: ${currentScore}`);
-              comboText.setText(`COMBO: ${currentCombo}x`);
-              healthText.setText(`HEALTH: ${currentHealth}%`);
               setScore(currentScore);
               setCombo(currentCombo);
               setMultiplier(currentMultiplier);
@@ -735,7 +796,15 @@ export default function GamePage() {
               currentCombo = 0;
               currentMultiplier = 1;
               currentHealth = Math.max(0, currentHealth - 8);
+              const now = Date.now();
+              missTimestamps = [...missTimestamps, now].filter((timestamp) => now - timestamp <= 10_000);
               updateHud();
+
+              if (circuitEnabledRef.current && missTimestamps.length >= 3) {
+                pauseGameplay();
+                setMenuOpen(true);
+                console.log('Circuit Safety Activated!');
+              }
 
               syncClientRef.current?.publishGameplayEvent({
                 eventType: 'miss',
@@ -760,6 +829,7 @@ export default function GamePage() {
               currentCombo = 0;
               currentMultiplier = 1;
               currentHealth = 100;
+              missTimestamps = [];
               updateHud();
             };
 
@@ -775,8 +845,34 @@ export default function GamePage() {
               frequency: 80
             });
 
+            const ambientHaze = this.add.rectangle(sceneWidth / 2, sceneHeight * 0.28, sceneWidth * 0.9, sceneHeight * 0.45, 0x7a3cff, 0.12);
+            ambientHaze.setBlendMode(Phaser.BlendModes.ADD);
+
+            const scanBeam = this.add.rectangle(sceneWidth / 2, sceneHeight * 0.28, sceneWidth * 0.75, 14, 0x63f9ff, 0.22);
+            scanBeam.setBlendMode(Phaser.BlendModes.ADD);
+            this.tweens.add({
+              targets: scanBeam,
+              y: sceneHeight - 120,
+              alpha: { from: 0.34, to: 0.06 },
+              duration: 2100,
+              yoyo: true,
+              repeat: -1,
+              ease: 'Sine.InOut',
+            });
+
+            this.tweens.add({
+              targets: ambientHaze,
+              alpha: { from: 0.08, to: 0.16 },
+              duration: 1800,
+              yoyo: true,
+              repeat: -1,
+              ease: 'Sine.InOut',
+            });
+
             // 4 colored lanes
             const laneColors = [0xff6b35, 0xa0a0ff, 0x00ff88, 0x9945ff]; // Orange, Purple, Green, Blue
+            type LaneObj = { el: Phaser.GameObjects.Rectangle; er: Phaser.GameObjects.Rectangle; core: Phaser.GameObjects.Rectangle };
+            const laneObjects: LaneObj[] = [];
 
             laneXs.forEach((x, i) => {
               const laneColor = laneColors[i];
@@ -790,6 +886,7 @@ export default function GamePage() {
               const edgeRight = this.add.rectangle(x + laneWidth * 0.48, sceneHeight / 2, 3, sceneHeight, laneColor, 0.5);
               edgeLeft.setBlendMode(Phaser.BlendModes.ADD);
               edgeRight.setBlendMode(Phaser.BlendModes.ADD);
+              laneObjects.push({ el: edgeLeft, er: edgeRight, core: laneCore });
 
               const glitchSliceA = this.add.rectangle(x, sceneHeight * 0.28, laneWidth * 0.84, 6, laneColor, 0.22);
               const glitchSliceB = this.add.rectangle(x, sceneHeight * 0.62, laneWidth * 0.76, 4, laneColor, 0.18);
@@ -832,33 +929,77 @@ export default function GamePage() {
               });
             });
 
+            // Multiplier lane-lighting fx
+            const multiplierFxColors = [0x00ffff, 0x00ff88, 0xffee00, 0xff8800, 0xff00cc];
+            const triggerLaneFx = (level: number) => {
+              const colorIdx = Math.max(0, Math.min(Math.round((level - 1.5) / 0.5), multiplierFxColors.length - 1));
+              const fxColor = multiplierFxColors[colorIdx];
+
+              // Flash every lane edge + core
+              laneObjects.forEach(({ el, er, core }) => {
+                scene.tweens.killTweensOf([el, er, core]);
+                scene.tweens.add({
+                  targets: [el, er],
+                  alpha: { from: 1, to: 0.35 },
+                  duration: 480,
+                  ease: 'Cubic.Out',
+                });
+                scene.tweens.add({
+                  targets: core,
+                  alpha: { from: 0.88, to: 0.08 },
+                  duration: 560,
+                  ease: 'Cubic.Out',
+                });
+              });
+
+              // Energy wave sweeping top → strike zone
+              const wave = scene.add.rectangle(strikeZoneX, 0, strikeZoneWidth * 1.05, 12, fxColor, 0.94);
+              wave.setBlendMode(Phaser.BlendModes.ADD);
+              wave.setDepth(9);
+              scene.tweens.add({
+                targets: wave,
+                y: strikeZoneY,
+                scaleX: { from: 1, to: 0.5 },
+                alpha: { from: 0.92, to: 0 },
+                duration: 360,
+                ease: 'Sine.In',
+                onComplete: () => wave.destroy(),
+              });
+
+              // Ripple ring at strike zone
+              const ripple = scene.add.rectangle(strikeZoneX, strikeZoneY, strikeZoneWidth, 8, fxColor, 0.75);
+              ripple.setBlendMode(Phaser.BlendModes.ADD);
+              ripple.setDepth(9);
+              scene.tweens.add({
+                targets: ripple,
+                scaleX: { from: 0.35, to: 1.4 },
+                scaleY: { from: 1, to: 5 },
+                alpha: { from: 0.75, to: 0 },
+                duration: 360,
+                ease: 'Cubic.Out',
+                onComplete: () => ripple.destroy(),
+              });
+
+              // Upward particle burst at each lane position
+              laneXs.forEach((lx) => {
+                const burst = scene.add.particles(lx, strikeZoneY, 'note', {
+                  speed: { min: 90, max: 240 },
+                  angle: { min: 248, max: 292 },
+                  lifespan: { min: 260, max: 500 },
+                  quantity: 10,
+                  scale: { start: 0.5, end: 0 },
+                  alpha: { start: 0.92, end: 0 },
+                  blendMode: 'ADD',
+                  tint: fxColor,
+                });
+                scene.time.delayedCall(240, () => burst.destroy());
+              });
+            };
+
             // Strike zone
             this.add
               .rectangle(strikeZoneX, strikeZoneY, strikeZoneWidth, 100, 0x9945ff, 0.15)
               .setStrokeStyle(4, 0xffffff, 0.8);
-
-            // UI text
-            const scoreText = this.add.text(50, 30, 'SCORE: 0', {
-              fontSize: '40px',
-              color: '#a0a0ff',
-              fontFamily: 'Arial Black',
-              stroke: '#000',
-              strokeThickness: 8
-            });
-            const comboText = this.add.text(50, 80, 'COMBO: 0x', {
-              fontSize: '36px',
-              color: '#ff6b35',
-              fontFamily: 'Arial Black',
-              stroke: '#000',
-              strokeThickness: 8
-            });
-            const healthText = this.add.text(50, 130, 'HEALTH: 100%', {
-              fontSize: '36px',
-              color: '#00ff88',
-              fontFamily: 'Arial Black',
-              stroke: '#000',
-              strokeThickness: 8
-            });
 
             // Falling notes
             this.time.addEvent({
@@ -925,12 +1066,21 @@ export default function GamePage() {
               closestNote.destroy();
 
               currentCombo += 1;
+              const prevMultiplier = currentMultiplier;
               currentMultiplier = Math.min(5, 1 + Math.floor(currentCombo / 4) * 0.5);
               const pointsAwarded = Math.round(100 * currentMultiplier);
               currentScore += pointsAwarded;
               currentHealth = Math.min(100, currentHealth + 4);
               updateHud();
               showHitPopup(laneIndex, pointsAwarded, currentMultiplier);
+
+              if (currentMultiplier > prevMultiplier) {
+                triggerLaneFx(currentMultiplier);
+              }
+
+              if (currentCombo >= 10) {
+                triggerComboFx();
+              }
 
               syncClientRef.current?.publishGameplayEvent({
                 eventType: 'hit',
@@ -1021,7 +1171,7 @@ export default function GamePage() {
   }, []);
 
   return (
-    <div className="game-page">
+    <div className={`game-page ${shouldBlurGameStage ? 'is-panel-open' : ''}`}>
       <div className="game-aura" />
       <div className="game-stars" />
       <div className="game-vignette" />
@@ -1044,12 +1194,189 @@ export default function GamePage() {
             Start
           </button>
         </div>
-        <div className="game-controls-panel">
+        <div className="game-stage">
+          <div className="game-stage-hud">
+            <div className="game-stage-hud-top">
+              <span>Track Time</span>
+              <span>{formatTrackTime(trackElapsed)} / {formatTrackTime(trackDuration)}</span>
+            </div>
+            <div className="game-stage-hud-metrics" aria-label="score and combo">
+              <span>SCORE: {score}</span>
+              <span>COMBO: {combo}x</span>
+              <span>MULTI: x{multiplier.toFixed(1)}</span>
+            </div>
+            <div className="game-health-panel game-health-panel-stage" aria-label="health bar">
+              <div className="game-health-track">
+                <div
+                  className={`game-health-fill ${health > 50 ? 'is-good' : health > 20 ? 'is-warning' : 'is-critical'}`}
+                  style={{ width: `${health}%` }}
+                />
+              </div>
+              <p className={`game-health-label ${health > 50 ? 'is-good' : 'is-critical'}`}>HEALTH: {health}%</p>
+            </div>
+            <div
+              className="game-progress-track"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={trackDuration > 0 ? Math.round((trackElapsed / trackDuration) * 100) : 0}
+            >
+              <div
+                className="game-progress-fill"
+                style={{ width: `${trackDuration > 0 ? Math.min(100, (trackElapsed / trackDuration) * 100) : 0}%` }}
+              />
+            </div>
+            <div className="game-visualizer game-visualizer-stage" aria-label="Audio visualizer">
+              {visualizerLevels.map((level, index) => (
+                <span
+                  key={`viz-${index}`}
+                  className="game-visualizer-bar"
+                  style={{ height: `${level}px` }}
+                />
+              ))}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="game-control-button game-dashboard-fab"
+            onClick={() => setDashboardExpanded((previous) => !previous)}
+            aria-expanded={dashboardExpanded}
+            aria-controls="game-dashboard-panel"
+          >
+            {dashboardExpanded ? 'Hide Dashboard' : 'Dashboard'}
+          </button>
+          <div id="game-container" className="game-canvas-frame"></div>
+          {!gameStarted && (
+            <div className="game-start-overlay">
+              <p>{isGameReady ? 'Press Start to begin song, notes, and scoring.' : 'Loading game engine...'}</p>
+              <button type="button" className="game-primary-action" onClick={startGameplay} disabled={!isGameReady}>
+                Start
+              </button>
+            </div>
+          )}
+          {menuOpen && (
+            <div className="game-menu-overlay">
+              <div className="game-menu-card">
+                <h2>In-Game Menu</h2>
+                <button
+                  type="button"
+                  className="game-control-button"
+                  onClick={() => {
+                    if (gamePaused) {
+                      resumeGameplay();
+                      setMenuOpen(false);
+                    } else {
+                      pauseGameplay();
+                    }
+                  }}
+                >
+                  {gamePaused ? 'Resume' : 'Pause'}
+                </button>
+                <div className="game-audio-settings">
+                  <label htmlFor="volume-slider">Volume: {volume}%</label>
+                  <input
+                    id="volume-slider"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={volume}
+                    onChange={(event) => setVolume(Number(event.target.value))}
+                  />
+                  <button
+                    type="button"
+                    className="game-control-button"
+                    onClick={() => setMuted((prev) => !prev)}
+                  >
+                    {muted ? 'Unmute' : 'Mute'}
+                  </button>
+                </div>
+                <div className="game-menu-distortion">
+                  <span>Distortion</span>
+                  <div className="game-distortion-buttons">
+                    {(['low', 'high'] as DistortionLevel[]).map((level) => (
+                      <button
+                        key={`menu-${level}`}
+                        type="button"
+                        className={`song-menu-difficulty-button ${distortionLevel === level ? 'is-active' : ''}`}
+                        onClick={() => applyDistortionLevel(level)}
+                      >
+                        {level}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="game-menu-circuit">
+                  <label htmlFor="circuit-mode-toggle">Circuit Safety (Auto-Pause on Rapid Misses)</label>
+                  <input
+                    id="circuit-mode-toggle"
+                    type="checkbox"
+                    checked={circuitEnabled}
+                    onChange={(event) => setCircuitEnabled(event.target.checked)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="game-control-button game-menu-submit-score"
+                  onClick={handleSubmitHighScore}
+                  disabled={score <= 0}
+                >
+                  Submit High Score
+                </button>
+                <button type="button" className="game-control-button game-quit-button" onClick={quitToSongs}>
+                  Quit to Song Menu
+                </button>
+              </div>
+            </div>
+          )}
+          {gameStarted && health <= 0 && (
+            <div className="game-over-overlay">
+              <h2>GAME OVER</h2>
+              <p>Final Score: {score}</p>
+              <button
+                type="button"
+                className="game-control-button game-over-submit"
+                onClick={handleSubmitHighScore}
+                disabled={score <= 0}
+              >
+                Submit High Score
+              </button>
+              <button
+                type="button"
+                className="game-control-button game-over-restart"
+                onClick={startGameplay}
+              >
+                Play Again
+              </button>
+            </div>
+          )}
+          {songComplete && (
+            <div className="game-over-overlay game-complete-overlay">
+              <h2>SONG COMPLETE!</h2>
+              <p>Final Score: {score}</p>
+              <button
+                type="button"
+                className="game-control-button game-over-submit"
+                onClick={handleSubmitHighScore}
+              >
+                Submit High Score
+              </button>
+              <button
+                type="button"
+                className="game-control-button game-over-restart"
+                onClick={() => { setSongComplete(false); startGameplay(); }}
+              >
+                Play Again
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="game-dashboard-shell">
+        {dashboardExpanded && (
+        <div id="game-dashboard-panel" className="game-controls-panel">
           <div className="game-controls-row">
             <span>SCORE: {score}</span>
             <span>COMBO: {combo}x</span>
             <span>MULTIPLIER: x{multiplier.toFixed(1)}</span>
-            <span>HEALTH: {health}%</span>
             <span>DIFFICULTY: {selectedDifficulty.toUpperCase()}</span>
             {gameStarted && gamePaused && !menuOpen && <span className="game-paused-badge">PAUSED</span>}
           </div>
@@ -1167,94 +1494,7 @@ export default function GamePage() {
             )}
           </div>
         </div>
-        <div className="game-stage">
-          <div id="game-container" className="game-canvas-frame"></div>
-          {!gameStarted && (
-            <div className="game-start-overlay">
-              <p>{isGameReady ? 'Press Start to begin song, notes, and scoring.' : 'Loading game engine...'}</p>
-              <button type="button" className="game-primary-action" onClick={startGameplay} disabled={!isGameReady}>
-                Start
-              </button>
-            </div>
-          )}
-          {menuOpen && (
-            <div className="game-menu-overlay">
-              <div className="game-menu-card">
-                <h2>In-Game Menu</h2>
-                <button
-                  type="button"
-                  className="game-control-button"
-                  onClick={() => {
-                    if (gamePaused) {
-                      resumeGameplay();
-                      setMenuOpen(false);
-                    } else {
-                      pauseGameplay();
-                    }
-                  }}
-                >
-                  {gamePaused ? 'Resume' : 'Pause'}
-                </button>
-                <div className="game-audio-settings">
-                  <label htmlFor="volume-slider">Volume: {volume}%</label>
-                  <input
-                    id="volume-slider"
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={volume}
-                    onChange={(event) => setVolume(Number(event.target.value))}
-                  />
-                  <button
-                    type="button"
-                    className="game-control-button"
-                    onClick={() => setMuted((prev) => !prev)}
-                  >
-                    {muted ? 'Unmute' : 'Mute'}
-                  </button>
-                </div>
-                <div className="game-menu-distortion">
-                  <span>Distortion</span>
-                  <div className="game-distortion-buttons">
-                    {(['low', 'high'] as DistortionLevel[]).map((level) => (
-                      <button
-                        key={`menu-${level}`}
-                        type="button"
-                        className={`song-menu-difficulty-button ${distortionLevel === level ? 'is-active' : ''}`}
-                        onClick={() => applyDistortionLevel(level)}
-                      >
-                        {level}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <button type="button" className="game-control-button game-quit-button" onClick={quitToSongs}>
-                  Quit to Song Menu
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-        <div className="game-progress-panel">
-          <div className="game-progress-labels">
-            <span>Track Progress</span>
-            <span>{formatTrackTime(trackElapsed)} / {formatTrackTime(trackDuration)}</span>
-          </div>
-          <div className="game-progress-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={trackDuration > 0 ? Math.round((trackElapsed / trackDuration) * 100) : 0}>
-            <div
-              className="game-progress-fill"
-              style={{ width: `${trackDuration > 0 ? Math.min(100, (trackElapsed / trackDuration) * 100) : 0}%` }}
-            />
-          </div>
-          <div className="game-visualizer" aria-label="Audio visualizer">
-            {visualizerLevels.map((level, index) => (
-              <span
-                key={`viz-${index}`}
-                className="game-visualizer-bar"
-                style={{ height: `${level}px` }}
-              />
-            ))}
-          </div>
+        )}
         </div>
       </div>
     </div>
