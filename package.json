@@ -8,7 +8,11 @@
     "dev:stack": "MULTIPLAYER_PORT=8787 node multiplayer/server.js & VITE_MULTIPLAYER_WS_URL=ws://localhost:8787 vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "check:program": "cargo check -p rhythmforge"
+    "check:program": "cargo check -p rhythmforge",
+    "cap:sync": "npm run build && npx cap sync android",
+    "cap:open": "npx cap open android",
+    "store:validate": "npx @solana-mobile/dapp-store-cli validate -k publisher-keypair.json -b dapp-store/app-release.apk dapp-store/config.yaml",
+    "store:submit": "npx @solana-mobile/dapp-store-cli publish submit -k publisher-keypair.json dapp-store/config.yaml"
   },
   "dependencies": {
     "@anchor-lang/core": "^0.32.1",

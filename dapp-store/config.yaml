@@ -1,0 +1,62 @@
+publish_details:
+  # Change to mainnet-beta when ready for real submission
+  network: mainnet-beta
+  publisher:
+    name: "World Labs"
+    website: "https://github.com/braelenp/rhythmforge"
+    # Your Solana publisher address (set after running: dapp-store-cli create publisher)
+    address: ""
+
+app:
+  android_package: "com.worldlabs.rhythmforge"
+  urls:
+    # Optional but recommended — add your links before submitting
+    license_url: ""
+    copyright_url: ""
+    privacy_policy_url: ""
+    website_url: "https://github.com/braelenp/rhythmforge"
+  # The signed APK built by GitHub Actions (place it here before publishing)
+  apk: "app-release.apk"
+
+release:
+  version:
+    - 1
+  catalog:
+    en-US:
+      name: "Rhythmforge"
+      short_description: "On-chain rhythm game on Solana. Hit notes, earn tokens, mint your best runs as NFTs."
+      long_description: |
+        Rhythmforge is a Web3 rhythm game built on the Solana blockchain.
+
+        Tap notes in sync with the beat, rack up combos, and climb the multiplier ladder.
+        Your high scores are stored on-chain and the best runs can be minted as Circuit NFTs.
+
+        Features:
+        - Immersive lane-highway gameplay with real-time audio sync
+        - On-chain high score tracking via Solana smart contracts
+        - Multiplier system with dynamic lane lighting effects
+        - Circuit NFT minting for top performances
+        - Multiplayer sync support
+        - Mobile-first design via Solana Mobile / Saga
+
+      new_in_version: "Initial release — full gameplay, on-chain scoring, Circuit NFT integration."
+      saga_features: "Optimized for Solana Mobile. Uses Saga/Seeker Mobile Wallet Adapter for seamless wallet interactions."
+
+  media:
+    # --- REQUIRED: Add your assets to dapp-store/assets/ before submitting ---
+    # 512x512 PNG app icon
+    - purpose: icon
+      uri: "assets/icon.png"
+      width: 512
+      height: 512
+
+    # At least 2 screenshots (1080x1920 portrait recommended)
+    - purpose: screenshot
+      uri: "assets/screenshot1.png"
+      width: 1080
+      height: 1920
+
+    - purpose: screenshot
+      uri: "assets/screenshot2.png"
+      width: 1080
+      height: 1920
